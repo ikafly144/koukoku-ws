@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -19,6 +20,7 @@ var upgrader = websocket.Upgrader{
 
 var ws_conn = map[*websocket.Conn]struct{}{}
 var tcp_conn *tls.Conn
+var re = regexp.MustCompile("[\u001B\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PRZcf-ntqry=><~]))")
 
 func init() {
 	config := tls.Config{Certificates: []tls.Certificate{}, InsecureSkipVerify: false}
@@ -26,6 +28,7 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+	fmt.Fprintln(conn, "nobody")
 	tcp_conn = conn
 }
 
@@ -82,18 +85,20 @@ func read(ws *websocket.Conn, wg *sync.WaitGroup) {
 
 func write() {
 	scanner := bufio.NewScanner(tcp_conn)
+	var message string
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "\x1b[0m\x1b[1m\x1b[31m>>") {
+		message += strings.TrimSpace(re.ReplaceAllString(line, ""))
+		if !strings.HasSuffix(line, "<<") {
 			continue
 		}
-		line = strings.TrimPrefix(line, "\x1b[0m\x1b[1m\x1b[31m")
-		slog.Info("received", "message", line)
+		slog.Info("received", "message", message)
 		for c := range ws_conn {
-			if err := c.WriteMessage(websocket.TextMessage, []byte(line)); err != nil {
+			if err := c.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
 				slog.Error("failed to write ws", "err", err)
 				continue
 			}
 		}
+		message = ""
 	}
 }
