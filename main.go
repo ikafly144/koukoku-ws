@@ -3,15 +3,28 @@ package main
 import (
 	"bufio"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
 )
+
+var port *uint = flag.Uint("uint", 8080, "websocket port")
+var addr *string = flag.String("addr", "0.0.0.0", "websocket address")
+var debug *bool = flag.Bool("debug", false, "")
+
+func init() {
+	flag.Parse()
+	if *debug {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}
+}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -48,8 +61,8 @@ func main() {
 
 	go write()
 
-	slog.Info("listening", "ip", "0.0.0.0", "port", "8080")
-	if err := http.ListenAndServe("0.0.0.0:8080", http.DefaultServeMux); err != nil {
+	slog.Info("listening", "ip", *addr, "port", *port)
+	if err := http.ListenAndServe(fmt.Sprintf("%s:%d", *addr, *port), http.DefaultServeMux); err != nil {
 		panic(err)
 	}
 
@@ -86,12 +99,33 @@ func read(ws *websocket.Conn, wg *sync.WaitGroup) {
 func write() {
 	scanner := bufio.NewScanner(tcp_conn)
 	var message string
+	var bind bool
+	var 大演説 string
 	for scanner.Scan() {
-		line := scanner.Text()
-		message += strings.TrimSpace(re.ReplaceAllString(line, ""))
-		if !strings.HasSuffix(line, "<<") {
+		line := strings.TrimSpace(re.ReplaceAllString(scanner.Text(), ""))
+		slog.Debug("raw message", "line", line)
+		if line == "＝＝＝ 大演説の終焉 ＝＝＝" {
+			大演説 += line
+			slog.Info("received", "大演説", 大演説)
+			for c := range ws_conn {
+				if err := c.WriteMessage(websocket.TextMessage, []byte(大演説)); err != nil {
+					slog.Error("failed to write ws", "err", err)
+					continue
+				}
+			}
+			大演説 = ""
 			continue
 		}
+		if !bind && !strings.HasPrefix(line, ">>") {
+			大演説 += fmt.Sprintln(line)
+			continue
+		}
+		bind = true
+		message += line
+		if !strings.HasSuffix(line, "<") {
+			continue
+		}
+		bind = false
 		slog.Info("received", "message", message)
 		for c := range ws_conn {
 			if err := c.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
